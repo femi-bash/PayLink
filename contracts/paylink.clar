@@ -94,3 +94,104 @@
 ;; STATE VARIABLES
 (define-data-var tag-counter uint u0)
 (define-data-var contract-paused bool false)
+
+;; INTERNAL UTILITY FUNCTIONS
+
+;; Index management for creator tracking
+(define-private (add-to-creator-index
+    (creator principal)
+    (tag-id uint)
+  )
+  (let (
+      (current-data (default-to {
+        tag-ids: (list),
+        count: u0,
+      }
+        (map-get? creator-index { creator: creator })
+      ))
+      (current-list (get tag-ids current-data))
+      (current-count (get count current-data))
+    )
+    (match (as-max-len? (append current-list tag-id) u100)
+      new-list (begin
+        (map-set creator-index { creator: creator } {
+          tag-ids: new-list,
+          count: (+ current-count u1),
+        })
+        true
+      )
+      false
+    )
+  )
+)
+
+;; Index management for recipient tracking
+(define-private (add-to-recipient-index
+    (recipient principal)
+    (tag-id uint)
+  )
+  (let (
+      (current-data (default-to {
+        tag-ids: (list),
+        count: u0,
+      }
+        (map-get? recipient-index { recipient: recipient })
+      ))
+      (current-list (get tag-ids current-data))
+      (current-count (get count current-data))
+    )
+    (match (as-max-len? (append current-list tag-id) u100)
+      new-list (begin
+        (map-set recipient-index { recipient: recipient } {
+          tag-ids: new-list,
+          count: (+ current-count u1),
+        })
+        true
+      )
+      false
+    )
+  )
+)
+
+;; Expiration validation logic
+(define-private (is-tag-expired (expires-at uint))
+  (>= stacks-block-height expires-at)
+)
+
+;; Analytics helper for protocol metrics
+(define-private (increment-stat (stat-key (string-ascii 32)))
+  (let ((current-value (default-to u0 (get value (map-get? contract-stats { key: stat-key })))))
+    (map-set contract-stats { key: stat-key } { value: (+ current-value u1) })
+  )
+)
+
+;; READ-ONLY QUERY FUNCTIONS
+
+;; Retrieve current payment request counter
+(define-read-only (get-tag-counter)
+  (var-get tag-counter)
+)
+
+;; Fetch specific payment request details
+(define-read-only (get-payment-tag (tag-id uint))
+  (match (map-get? payment-tags { id: tag-id })
+    tag-data (ok tag-data)
+    (err ERR-NOT-FOUND)
+  )
+)
+
+;; Query all payment requests created by user
+(define-read-only (get-creator-tags (creator principal))
+  (match (map-get? creator-index { creator: creator })
+    index-data (ok (get tag-ids index-data))
+    (ok (list))
+  )
+)
+
+;; Query all payment requests for recipient
+(define-read-only (get-recipient-tags (recipient principal))
+  (match (map-get? recipient-index { recipient: recipient })
+    index-data (ok (get tag-ids index-data))
+    (ok (list))
+  )
+)
