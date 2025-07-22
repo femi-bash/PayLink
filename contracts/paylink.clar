@@ -195,3 +195,102 @@
     (ok (list))
   )
 )
+
+;; Validate if payment request can be expired
+(define-read-only (can-expire-tag (tag-id uint))
+  (match (map-get? payment-tags { id: tag-id })
+    tag-data (if (and
+        (is-eq (get state tag-data) STATE-PENDING)
+        (is-tag-expired (get expires-at tag-data))
+      )
+      (ok true)
+      (ok false)
+    )
+    (err ERR-NOT-FOUND)
+  )
+)
+
+;; Retrieve protocol analytics
+(define-read-only (get-contract-stats (stat-key (string-ascii 32)))
+  (match (map-get? contract-stats { key: stat-key })
+    stat-data (ok (get value stat-data))
+    (ok u0)
+  )
+)
+
+;; Check protocol operational status
+(define-read-only (is-contract-paused)
+  (var-get contract-paused)
+)
+
+;; Batch query multiple payment requests
+(define-read-only (get-multiple-tags (tag-ids (list 20 uint)))
+  (ok (map get-tag-safe tag-ids))
+)
+
+;; Safe tag retrieval for batch operations
+(define-private (get-tag-safe (tag-id uint))
+  (map-get? payment-tags { id: tag-id })
+)
+
+;; CORE PAYMENT FUNCTIONS
+
+;; Create new payment request with full validation
+(define-public (create-payment-tag
+    (recipient principal)
+    (amount uint)
+    (expires-in-blocks uint)
+    (memo (optional (string-ascii 256)))
+  )
+  (let (
+      (new-tag-id (+ (var-get tag-counter) u1))
+      (expiration-block (+ stacks-block-height expires-in-blocks))
+    )
+    (begin
+      ;; Protocol state validation
+      (asserts! (not (var-get contract-paused)) (err ERR-UNAUTHORIZED))
+      ;; Input parameter validation
+      (asserts! (>= amount MIN-PAYMENT-AMOUNT) (err ERR-INVALID-AMOUNT))
+      (asserts! (<= expires-in-blocks MAX-EXPIRATION-BLOCKS)
+        (err ERR-MAX-EXPIRATION-EXCEEDED)
+      )
+      (asserts! (> expires-in-blocks u0) (err ERR-INVALID-AMOUNT))
+      (asserts! (not (is-eq tx-sender recipient)) (err ERR-SELF-PAYMENT))
+      ;; Memo validation if provided
+      (match memo
+        some-memo (asserts! (> (len some-memo) u0) (err ERR-EMPTY-MEMO))
+        true
+      )
+      ;; Create payment request record
+      (map-set payment-tags { id: new-tag-id } {
+        creator: tx-sender,
+        recipient: recipient,
+        amount: amount,
+        created-at: stacks-block-height,
+        expires-at: expiration-block,
+        memo: memo,
+        state: STATE-PENDING,
+        payment-tx: none,
+        payment-block: none,
+      })
+      ;; Update global counter
+      (var-set tag-counter new-tag-id)
+      ;; Update indexing structures
+      (add-to-creator-index tx-sender new-tag-id)
+      (add-to-recipient-index recipient new-tag-id)
+      ;; Update protocol metrics
+      (increment-stat "tags-created")
+      ;; Broadcast creation event
+      (print {
+        event: "payment-tag-created",
+        tag-id: new-tag-id,
+        creator: tx-sender,
+        recipient: recipient,
+        amount: amount,
+        expires-at: expiration-block,
+        memo: memo,
+      })
+      (ok new-tag-id)
+    )
+  )
+)
