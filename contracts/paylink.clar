@@ -390,3 +390,29 @@
     )
   )
 )
+
+;; PROTOCOL ADMINISTRATION
+
+;; Emergency protocol pause/resume (deployer authorization required)
+(define-public (toggle-contract-pause)
+  (begin
+    (asserts! (is-eq tx-sender CONTRACT-DEPLOYER) (err ERR-UNAUTHORIZED))
+    (var-set contract-paused (not (var-get contract-paused)))
+    (print {
+      event: "contract-pause-toggled",
+      paused: (var-get contract-paused),
+    })
+    (ok (var-get contract-paused))
+  )
+)
+
+;; Protocol information and version details
+(define-read-only (get-contract-info)
+  (ok {
+    name: "PayLink Protocol",
+    version: "1.0.0",
+    deployer: CONTRACT-DEPLOYER,
+    total-tags: (var-get tag-counter),
+    paused: (var-get contract-paused),
+  })
+)
